@@ -195,7 +195,7 @@ async function makeDailyReport(vertical){
   const events=allLogs.filter(item=>['起床','就寝','勉強'].includes(item.category))
     .map(item=>({...item,dt:new Date(item.timestamp)})).sort((a,b)=>a.dt-b.dt);
   const wakes=events.filter(e=>e.category==='起床'), sleeps=events.filter(e=>e.category==='就寝');
-  // 今日最初の記録が起床なら、前日の最後のQRを就寝として補う。
+  // 今日最初の記録が起床なら、前日の最後のQRを仮想的な就寝として扱う。
   const firstLogToday=allLogs.find(e=>dateKey(new Date(e.timestamp))===day);
   if(firstLogToday && firstLogToday.category==='起床'){
     const prevDay=dateKey(addDays(parseDate(day),-1));
@@ -208,54 +208,71 @@ async function makeDailyReport(vertical){
   else if(sleeps.length)darkRanges.push([sleeps[0].dt,dayEnd]);
   for(const sleep of sleeps){const nextWake=wakes.find(e=>e.dt>sleep.dt);if(nextWake)darkRanges.push([sleep.dt,nextWake.dt]);else if(!wakes.length)darkRanges.push([sleep.dt,dayEnd]);}
 
-  // 各「勉強」記録から次のQR読み取りまでを勉強時間として帯で表示する。
-  // 日付をまたぐ区間も、対象日の各時間行に分けて描画する。
   const studyIntervals=[];
   for(let i=0;i<allLogs.length;i++){
     const a=allLogs[i];if(a.category!=='勉強')continue;
     const next=effectiveNextLog(allLogs,i);if(!next)continue;
     const t1=new Date(a.timestamp),t2=new Date(next.timestamp);
-    if(t2<=t1)continue;
-    if(t2<=dayStart||t1>=dayEnd)continue;
+    if(t2<=t1||t2<=dayStart||t1>=dayEnd)continue;
     studyIntervals.push({start:t1,end:t2,source:a});
   }
-  const hourH=vertical?58:42, labelW=48, plotX=x+labelW, plotW=w-labelW;
-  const startY=y;
-  const colorStudy='#a9e2f3';
+
+  const labelW=48, plotX=x+labelW, plotW=w-labelW, startY=y;
+  const baseHourH=42, laneH=19, colorStudy='#a9e2f3';
+  let rowY=startY;
   for(let hour=0;hour<24;hour++){
-    const rowY=startY+hour*hourH;
     const hStart=new Date(dayStart.getTime()+hour*3600000),hEnd=new Date(hStart.getTime()+3600000);
-    // 睡眠中の時間帯を紺色に塗る。
+    const rowEvents=events.filter(e=>e.dt>=hStart&&e.dt<hEnd);
+    // 文字の横幅を考慮して、重ならないレーンへ割り当てる。
+    const labelItems=rowEvents.map(item=>{
+      const minute=item.dt.getMinutes(),pos=plotX+(minute/60)*plotW;
+      const idx=allLogs.findIndex(z=>z.logId===item.logId);
+      const prev=idx>0?allLogs[idx-1]:null;
+      const isStudyEnd=prev&&prev.category==='勉強'&&item.category!=='勉強';
+      const label=item.category==='勉強'?item.name:(isStudyEnd?item.category:(item.name||item.category));
+      const color=item.category==='起床'?'#c62828':item.category==='就寝'?'#7b3fb4':'#12304a';
+      ctx.font='bold 13px sans-serif';
+      const text=minute+'分 '+label;
+      const textWidth=Math.min(ctx.measureText(text).width,Math.max(36,x+w-pos-5));
+      let left=pos+5,right=left+textWidth;
+      // 右端に収まらない場合は、時刻位置の左側へラベルを置く。
+      if(right>x+w){right=pos-5;left=Math.max(plotX,right-textWidth)}
+      return {item,minute,pos,text,color,left,right,width:textWidth};
+    });
+    const lanes=[];
+    for(const item of labelItems){
+      let lane=0;
+      while(lanes[lane] && lanes[lane].some(r=>item.left<r.right+5&&item.right>r.left-5))lane++;
+      if(!lanes[lane])lanes[lane]=[];
+      lanes[lane].push(item);item.lane=lane;
+    }
+    const rowH=Math.max(baseHourH,12+Math.max(1,lanes.length)*laneH);
+    // 睡眠時間帯を紺色で塗る。
     for(const [a,b] of darkRanges){
       const aa=Math.max(a,hStart),bb=Math.min(b,hEnd);
-      if(bb>aa){const left=plotX+(aa-hStart)/3600000*plotW,width=(bb-aa)/3600000*plotW;ctx.fillStyle='#12304a';ctx.fillRect(left,rowY,Math.max(0,width),hourH);}
+      if(bb>aa){const left=plotX+(aa-hStart)/3600000*plotW,width=(bb-aa)/3600000*plotW;ctx.fillStyle='#12304a';ctx.fillRect(left,rowY,Math.max(0,width),rowH);}
     }
-    // 勉強時間を薄い水色で塗る。開始・終了位置は分に合わせて横方向に配置。
+    // 勉強時間は薄い水色で、時間ごとの行に分割して塗る。
     for(const seg of studyIntervals){
       const aa=Math.max(seg.start,hStart),bb=Math.min(seg.end,hEnd);
-      if(bb>aa){const left=plotX+(aa-hStart)/3600000*plotW,width=(bb-aa)/3600000*plotW;ctx.fillStyle=colorStudy;ctx.fillRect(left,rowY+4,Math.max(2,width),hourH-8);}
+      if(bb>aa){const left=plotX+(aa-hStart)/3600000*plotW,width=(bb-aa)/3600000*plotW;ctx.fillStyle=colorStudy;ctx.fillRect(left,rowY+4,Math.max(2,width),rowH-8);}
     }
     const rowDark=darkRanges.some(([a,b])=>a<=hStart&&b>hStart);
     ctx.fillStyle=rowDark?'#ffffff':'#12304a';ctx.font='bold 15px sans-serif';ctx.textAlign='left';ctx.fillText(hour+'時',x,rowY+5);
-    // 時刻が近い記録は同じ分の位置に重ねず、縦にずらして表示。
-    const rowEvents=events.filter(e=>e.dt>=hStart&&e.dt<hEnd);
-    const stacks=new Map();
-    for(const item of rowEvents){
-      const minute=item.dt.getMinutes(),key=minute;const stack=stacks.get(key)||0;stacks.set(key,stack+1);
-      const pos=plotX+(minute/60)*plotW;
-      const prev=allLogs[allLogs.findIndex(z=>z.logId===item.logId)-1];
-      const isStudyEnd=prev&&prev.category==='勉強'&&item.category!=='勉強';
-      const label=item.category==='勉強'?item.name:(isStudyEnd?item.category:(item.name||item.category));
-      const labelColor=item.category==='起床'?'#c62828':item.category==='就寝'?'#7b3fb4':'#12304a';
-      const textY=rowY+Math.min(hourH-14,7+stack*15);
-      ctx.fillStyle=labelColor;ctx.font='bold 13px sans-serif';
-      // 横軸の分位置に小さな印を置き、ラベルはその右側に表示。
-      ctx.beginPath();ctx.arc(pos,textY+5,3,0,Math.PI*2);ctx.fill();
-      ctx.fillText(minute+'分 '+label,pos+5,textY,Math.max(24,x+w-(pos+5)));
+    // 記録が多い時間帯は行の高さを自動で広げ、ラベルを上下にずらして表示。
+    for(const item of labelItems){
+      const textY=rowY+6+item.lane*laneH;
+      ctx.fillStyle=item.color;
+      ctx.beginPath();ctx.arc(item.pos,textY+5,3,0,Math.PI*2);ctx.fill();
+      ctx.font='bold 13px sans-serif';ctx.textAlign=item.left<item.pos?'right':'left';
+      const tx=item.left<item.pos?item.pos-5:item.pos+5;
+      ctx.fillText(item.text,tx,textY,Math.max(24,item.width));
+      ctx.textAlign='left';
     }
-    ctx.strokeStyle='#cbd5dc';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,rowY+hourH);ctx.lineTo(x+w,rowY+hourH);ctx.stroke();
+    ctx.strokeStyle='#cbd5dc';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,rowY+rowH);ctx.lineTo(x+w,rowY+rowH);ctx.stroke();
+    rowY+=rowH;
   }
-  ctx.fillStyle='#12304a';ctx.textAlign='left';return startY+24*hourH;
+  ctx.fillStyle='#12304a';ctx.textAlign='left';return rowY;
  }
  if(vertical){let y=drawLeft(margin,y0,colW);drawRight(margin,y+28,colW)}else{drawLeft(margin,y0,colW);drawRight(margin+colW+gap,y0,colW)}
  const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));if(!blob){alert('PNG画像を作成できませんでした。');return}

@@ -177,14 +177,14 @@ async function makeDailyReport(vertical){
  ctx.fillStyle='#ffffff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.fillStyle='#12304a';ctx.textBaseline='top';
  const margin=64,gap=48,colW=vertical?canvas.width-2*margin:(canvas.width-2*margin-gap)/2;
  function wrap(text,font,maxW){ctx.font=font;let lines=[];for(const para of String(text??'').split('\n')){let line='';for(const ch of para){if(line&&ctx.measureText(line+ch).width>maxW){lines.push(line);line=ch}else line+=ch}lines.push(line||'')}return lines}
- function drawSection(x,y,w,title){ctx.fillStyle='#12304a';ctx.font='bold 38px sans-serif';ctx.fillText(title,x,y);return y+66}
+ function drawSection(x,y,w,title){ctx.fillStyle='#12304a';ctx.font=`bold ${vertical?82:38}px sans-serif`;ctx.fillText(title,x,y);return y+(vertical?118:66)}
  function line(x,y,w){ctx.strokeStyle='#cbd5dc';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+w,y);ctx.stroke()}
- ctx.font='bold 46px sans-serif';ctx.fillText(day,margin,margin);let y0=margin+76;
+ ctx.font=`bold ${vertical?180:46}px sans-serif`;ctx.fillText(day,margin,margin);let y0=margin+(vertical?225:76);
  function drawLeft(x,y,w){
   y=drawSection(x,y,w,'What did I do today?');
-  ctx.font='bold 34px sans-serif';ctx.fillText('合計勉強時間：'+formatDuration(total),x,y);y+=62;line(x,y,w);y+=16;
+  ctx.font=`bold ${vertical?72:34}px sans-serif`;ctx.fillText('合計勉強時間：'+formatDuration(total),x,y);y+=vertical?112:62;line(x,y,w);y+=16;
   const gap2=24, cellW=(w-gap2)/2;
-  const cellFont=25, lineH=31;
+  const cellFont=vertical?60:25, lineH=vertical?74:31;
   // 記録を縦2列に並べ、左列から右列へ順に配置する。
   const rows=[];
   for(let i=0;i<studyGroups.length;i+=2)rows.push(studyGroups.slice(i,i+2));
@@ -195,13 +195,13 @@ async function makeDailyReport(vertical){
       ctx.font='bold '+cellFont+'px sans-serif';
       const nameLines=wrap(item.name,`bold ${cellFont}px sans-serif`,cellW-8);
       nameLines.forEach((t,i)=>ctx.fillText(t,cx,top+i*lineH));
-      ctx.font='bold 25px sans-serif';ctx.textAlign='right';ctx.fillText(formatDuration(item.minutes),cx+cellW,top);ctx.textAlign='left';
+      ctx.font=`bold ${vertical?60:25}px sans-serif`;ctx.textAlign='right';ctx.fillText(formatDuration(item.minutes),cx+cellW,top);ctx.textAlign='left';
       let cy=top+Math.max(lineH,nameLines.length*lineH)+5;
       const memoText=item.memos.join(' / ');
       if(memoText){
-        ctx.font='20px sans-serif';ctx.fillStyle='#536777';
-        const memoLines=wrap(memoText,'20px sans-serif',cellW-8);
-        memoLines.forEach(t=>{ctx.fillText(t,cx,cy);cy+=26});
+        ctx.font=`${vertical?46:20}px sans-serif`;ctx.fillStyle='#536777';
+        const memoLines=wrap(memoText,`${vertical?46:20}px sans-serif`,cellW-8);
+        memoLines.forEach(t=>{ctx.fillText(t,cx,cy);cy+=vertical?58:26});
         ctx.fillStyle='#12304a';
       }
       rowBottom=Math.max(rowBottom,cy+8);
@@ -211,6 +211,25 @@ async function makeDailyReport(vertical){
   return y;
  }
  function drawRight(x,y,w){
+  // 縦型では、時間軸の表ではなくQRコード名と読み取り時刻を順番に並べる。
+  if(vertical){
+    ctx.fillStyle='#12304a';ctx.font='bold 82px sans-serif';ctx.fillText('今日の一日',x,y);y+=125;
+    const dayLogs=logs.slice().sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
+    if(!dayLogs.length){ctx.font='58px sans-serif';ctx.fillText('記録はありません',x,y);return y+70;}
+    const rowGap=34, timeW=280, nameW=w-timeW-24;
+    for(const item of dayLogs){
+      const dt=new Date(item.timestamp);
+      const time=dt.toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',hour12:false});
+      ctx.font='bold 66px sans-serif';ctx.fillStyle='#12304a';ctx.fillText(time,x,y);
+      ctx.font='bold 66px sans-serif';
+      const name=item.name||item.category||'（名前なし）';
+      const lines=wrap(name,'bold 66px sans-serif',nameW);
+      lines.forEach((line,i)=>ctx.fillText(line,x+timeW,y+i*78));
+      const rowH=Math.max(88,lines.length*78)+rowGap;
+      y+=rowH;line(x,y,w);y+=18;
+    }
+    return y;
+  }
   y=drawSection(x,y,w,'今日の一日');y+=4;
   const dayStart=new Date(day+'T00:00:00'), dayEnd=new Date(dayStart.getTime()+24*3600000);
   const events=allLogs.filter(item=>['起床','就寝','勉強'].includes(item.category))
@@ -239,11 +258,14 @@ async function makeDailyReport(vertical){
   }
 
   const labelW=58, plotX=x+labelW, plotW=w-labelW, startY=y;
-  // 1日の振り返りは文字を大きくし、ラベル数に合わせて時間枠も広げる。
+  // 起床記録がある日は、その時刻を1日の開始点にする。起床前の睡眠・前日からの行動は表示しない。
+  const wakeStart=wakes.length?new Date(wakes[0].dt):dayStart;
   const baseHourH=68, laneH=38, labelFont=20, colorStudy='#a9e2f3';
   let rowY=startY;
   for(let hour=0;hour<24;hour++){
     const hStart=new Date(dayStart.getTime()+hour*3600000),hEnd=new Date(hStart.getTime()+3600000);
+    if(hEnd<=wakeStart)continue;
+    const visibleStart=new Date(Math.max(hStart.getTime(),wakeStart.getTime()));
     const rowEvents=events.filter(e=>e.dt>=hStart&&e.dt<hEnd);
     // ラベルの実際の描画位置・幅を使い、同じ時間帯内で横方向に重ならない段へ配置する。
     // 右端に近いラベルは左向きに配置し、左端も時間軸内に収める。
@@ -264,6 +286,10 @@ async function makeDailyReport(vertical){
       const right=rightSide?tx+measured:tx;
       return {item,minute,pos,text,color,left,right,width:measured,tx,align};
     });
+    // 記録も活動時間もない空白時間は枠を省略する。時間ラベルは表示する枠の左側に付ける。
+    const hasStudy=studyIntervals.some(seg=>seg.end>visibleStart&&seg.start<hEnd);
+    const hasSleep=darkRanges.some(([a,b])=>b>visibleStart&&a<hEnd);
+    if(!rowEvents.length&&!hasStudy&&!hasSleep)continue;
     // レーンは「実際の文字幅＋余白」で判定。詰め込み過ぎず、ラベルが多い日は行高を増やす。
     const lanes=[];
     for(const item of labelItems){
@@ -275,15 +301,15 @@ async function makeDailyReport(vertical){
     const rowH=Math.max(baseHourH,16+Math.max(1,lanes.length)*laneH);
     // 睡眠時間帯を紫色で塗る。
     for(const [a,b] of darkRanges){
-      const aa=Math.max(a,hStart),bb=Math.min(b,hEnd);
+      const aa=Math.max(a,hStart,visibleStart),bb=Math.min(b,hEnd);
       if(bb>aa){const left=plotX+(aa-hStart)/3600000*plotW,width=(bb-aa)/3600000*plotW;ctx.fillStyle='#7b3fb4';ctx.fillRect(left,rowY,Math.max(0,width),rowH);}
     }
     // 勉強時間は薄い水色で、時間ごとの行に分割して塗る。
     for(const seg of studyIntervals){
-      const aa=Math.max(seg.start,hStart),bb=Math.min(seg.end,hEnd);
+      const aa=Math.max(seg.start,hStart,visibleStart),bb=Math.min(seg.end,hEnd);
       if(bb>aa){const left=plotX+(aa-hStart)/3600000*plotW,width=(bb-aa)/3600000*plotW;ctx.fillStyle=colorStudy;ctx.fillRect(left,rowY+4,Math.max(2,width),rowH-8);}
     }
-    const rowDark=darkRanges.some(([a,b])=>a<=hStart&&b>hStart);
+    const rowDark=darkRanges.some(([a,b])=>a<=hStart&&b>hStart&&b>wakeStart);
     ctx.fillStyle=rowDark?'#ffffff':'#12304a';ctx.font='bold 21px sans-serif';ctx.textAlign='left';ctx.fillText(hour+'時',x,rowY+7);
     // 記録が多い時間帯は行の高さを自動で広げ、ラベルを上下にずらして表示。
     for(const item of labelItems){

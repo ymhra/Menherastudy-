@@ -218,12 +218,13 @@ async function makeDailyReport(vertical){
   }
 
   const labelW=48, plotX=x+labelW, plotW=w-labelW, startY=y;
-  const baseHourH=42, laneH=19, colorStudy='#a9e2f3';
+  const baseHourH=42, laneH=22, colorStudy='#a9e2f3';
   let rowY=startY;
   for(let hour=0;hour<24;hour++){
     const hStart=new Date(dayStart.getTime()+hour*3600000),hEnd=new Date(hStart.getTime()+3600000);
     const rowEvents=events.filter(e=>e.dt>=hStart&&e.dt<hEnd);
-    // 文字の横幅を考慮して、重ならないレーンへ割り当てる。
+    // ラベルの実際の描画位置・幅を使い、同じ時間帯内で横方向に重ならない段へ配置する。
+    // 右端に近いラベルは左向きに配置し、左端も時間軸内に収める。
     const labelItems=rowEvents.map(item=>{
       const minute=item.dt.getMinutes(),pos=plotX+(minute/60)*plotW;
       const idx=allLogs.findIndex(z=>z.logId===item.logId);
@@ -233,16 +234,19 @@ async function makeDailyReport(vertical){
       const color=item.category==='起床'?'#c62828':item.category==='就寝'?'#7b3fb4':'#12304a';
       ctx.font='bold 13px sans-serif';
       const text=minute+'分 '+label;
-      const textWidth=Math.min(ctx.measureText(text).width,Math.max(36,x+w-pos-5));
-      let left=pos+5,right=left+textWidth;
-      // 右端に収まらない場合は、時刻位置の左側へラベルを置く。
-      if(right>x+w){right=pos-5;left=Math.max(plotX,right-textWidth)}
-      return {item,minute,pos,text,color,left,right,width:textWidth};
+      const measured=ctx.measureText(text).width;
+      const rightSide=pos+5+measured<=x+w;
+      const tx=rightSide?pos+5:pos-5;
+      const align=rightSide?'left':'right';
+      const left=rightSide?tx:tx-measured;
+      const right=rightSide?tx+measured:tx;
+      return {item,minute,pos,text,color,left,right,width:measured,tx,align};
     });
+    // レーンは「実際の文字幅＋余白」で判定。詰め込み過ぎず、ラベルが多い日は行高を増やす。
     const lanes=[];
     for(const item of labelItems){
       let lane=0;
-      while(lanes[lane] && lanes[lane].some(r=>item.left<r.right+5&&item.right>r.left-5))lane++;
+      while(lanes[lane] && lanes[lane].some(r=>item.left<r.right+8&&item.right>r.left-8))lane++;
       if(!lanes[lane])lanes[lane]=[];
       lanes[lane].push(item);item.lane=lane;
     }
@@ -264,9 +268,8 @@ async function makeDailyReport(vertical){
       const textY=rowY+6+item.lane*laneH;
       ctx.fillStyle=item.color;
       ctx.beginPath();ctx.arc(item.pos,textY+5,3,0,Math.PI*2);ctx.fill();
-      ctx.font='bold 13px sans-serif';ctx.textAlign=item.left<item.pos?'right':'left';
-      const tx=item.left<item.pos?item.pos-5:item.pos+5;
-      ctx.fillText(item.text,tx,textY,Math.max(24,item.width));
+      ctx.font='bold 13px sans-serif';ctx.textAlign=item.align;
+      ctx.fillText(item.text,item.tx,textY);
       ctx.textAlign='left';
     }
     ctx.strokeStyle='#cbd5dc';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,rowY+rowH);ctx.lineTo(x+w,rowY+rowH);ctx.stroke();

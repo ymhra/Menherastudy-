@@ -84,13 +84,30 @@ function renderTimeline(el,logs){
   if(next){let gap=document.createElement('div');gap.className='record-gap';let mins=Math.max(0,Math.round((new Date(next.timestamp)-new Date(log.timestamp))/60000));gap.textContent='次の記録まで：'+formatDuration(mins);tl.appendChild(gap)}
  });el.appendChild(tl)
 }
+// 日付をまたぐ記録の扱い：翌日の最初が「起床」なら、前日の最後のQRを仮想的な「就寝」として扱う。
+function isFirstLogOfDay(log, logs){
+ const d=dateKey(new Date(log.timestamp));
+ return !logs.some(x=>dateKey(new Date(x.timestamp))===d && new Date(x.timestamp)<new Date(log.timestamp));
+}
+function isLastLogOfDay(log, logs){
+ const d=dateKey(new Date(log.timestamp));
+ return !logs.some(x=>dateKey(new Date(x.timestamp))===d && new Date(x.timestamp)>new Date(log.timestamp));
+}
+function effectiveNextLog(logs,index){
+ const current=logs[index], next=logs[index+1];
+ if(!current||!next)return next||null;
+ // 前日の最後が翌日の最初の「起床」につながる場合、前日の最後を就寝として扱い、
+ // その時点で直前の活動を終了する（翌朝まで勉強時間を伸ばさない）。
+ if(isLastLogOfDay(current,logs) && isFirstLogOfDay(next,logs) && next.category==='起床') return {...current, timestamp:current.timestamp, _virtualSleepBoundary:true};
+ return next;
+}
 function getStudyTotal(day){
  const logs=[...state.logs].sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
  const dayStart=new Date(day+'T00:00:00').getTime(),dayEnd=dayStart+24*60*60*1000;
  let total=0;
  for(let i=0;i<logs.length;i++){
   const start=logs[i];if(start.category!=='勉強')continue;
-  const next=logs[i+1];
+  const next=effectiveNextLog(logs,i);
   if(!next)continue;
   const a=new Date(start.timestamp).getTime(),b=new Date(next.timestamp).getTime();
   if(!Number.isFinite(a)||!Number.isFinite(b)||b<=a)continue;
@@ -151,7 +168,7 @@ async function makeDailyReport(vertical){
  let studies=[];
  const allLogs=[...state.logs].sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
  const dayStart=new Date(day+'T00:00:00').getTime(),dayEnd=dayStart+24*60*60*1000;
- for(let i=0;i<allLogs.length;i++){const item=allLogs[i];if(item.category!=='勉強')continue;const next=allLogs.slice(i+1).find(x=>x.id!==item.id);if(!next)continue;const a=new Date(item.timestamp).getTime(),b=new Date(next.timestamp).getTime();const overlap=Math.max(0,Math.min(b,dayEnd)-Math.max(a,dayStart));if(overlap>0&&dateKey(new Date(a))===day)studies.push({...item,minutes:Math.round(overlap/60000)})}
+ for(let i=0;i<allLogs.length;i++){const item=allLogs[i];if(item.category!=='勉強')continue;const next=effectiveNextLog(allLogs,i);if(!next)continue;const a=new Date(item.timestamp).getTime(),b=new Date(next.timestamp).getTime();const overlap=Math.max(0,Math.min(b,dayEnd)-Math.max(a,dayStart));if(overlap>0&&dateKey(new Date(a))===day)studies.push({...item,minutes:Math.round(overlap/60000)})}
  // 同じ名前の勉強QRは時間を合算して1行にまとめる
  const grouped=new Map();for(const item of studies){const key=item.name; if(!grouped.has(key))grouped.set(key,{...item,minutes:0,memos:[]});const g=grouped.get(key);g.minutes+=item.minutes;if(item.memo?.trim())g.memos.push(item.memo.trim())}
  const studyGroups=[...grouped.values()];
@@ -178,6 +195,14 @@ async function makeDailyReport(vertical){
   const events=allLogs.filter(item=>['起床','就寝','勉強'].includes(item.category))
     .map(item=>({...item,dt:new Date(item.timestamp)})).sort((a,b)=>a.dt-b.dt);
   const wakes=events.filter(e=>e.category==='起床'), sleeps=events.filter(e=>e.category==='就寝');
+  // 今日最初の記録が起床なら、前日の最後のQRを就寝として補う。
+  const firstLogToday=allLogs.find(e=>dateKey(new Date(e.timestamp))===day);
+  if(firstLogToday && firstLogToday.category==='起床'){
+    const prevDay=dateKey(addDays(parseDate(day),-1));
+    const prevLast=allLogs.filter(e=>dateKey(new Date(e.timestamp))===prevDay).at(-1);
+    if(prevLast && prevLast.category!=='就寝')sleeps.push({...prevLast,category:'就寝',dt:new Date(prevLast.timestamp),_virtual:true});
+    sleeps.sort((a,b)=>a.dt-b.dt);
+  }
   const darkRanges=[];
   if(wakes.length){const firstWake=wakes[0].dt;const priorSleep=sleeps.filter(e=>e.dt<firstWake).at(-1);darkRanges.push([priorSleep?priorSleep.dt:dayStart,firstWake]);}
   else if(sleeps.length)darkRanges.push([sleeps[0].dt,dayEnd]);
@@ -188,7 +213,7 @@ async function makeDailyReport(vertical){
   const studyIntervals=[];
   for(let i=0;i<allLogs.length;i++){
     const a=allLogs[i];if(a.category!=='勉強')continue;
-    const next=allLogs[i+1];if(!next)continue;
+    const next=effectiveNextLog(allLogs,i);if(!next)continue;
     const t1=new Date(a.timestamp),t2=new Date(next.timestamp);
     if(t2<=t1)continue;
     if(t2<=dayStart||t1>=dayEnd)continue;

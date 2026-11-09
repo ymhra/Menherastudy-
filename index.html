@@ -154,7 +154,7 @@ function renderQRList(items,target,title){
  }
  renderQRItems(items,el);
 }
-function renderQRItems(items,el){el.innerHTML='';if(!items.length){el.textContent='QRコードはありません。';return}items.forEach(q=>{let d=document.createElement('div');d.className='card';let titleRow=document.createElement('div');titleRow.className='qr-title-row';let h=document.createElement('h3');h.textContent=q.name;let more=document.createElement('button');more.className='qr-more';more.textContent='•••';more.setAttribute('aria-label','QRコードのメニュー');more.onclick=()=>{let menu=document.createElement('div');menu.className='row';let remove=document.createElement('button');remove.textContent='消去';remove.className='danger';remove.onclick=()=>deleteQR(q.id);menu.append(remove);titleRow.after(menu);more.onclick=()=>menu.remove()};titleRow.append(h,more);let qr=document.createElement('div');qr.className='qr-image';new QRCode(qr,{text:qrUrl(q),width:180,height:180});let category=document.createElement('p');category.className='small';category.textContent='分類：'+(q.category||'未分類');let status=document.createElement('p');status.className='small';status.textContent=q.printed?'印刷済み':'未印刷';let edit=document.createElement('button');edit.textContent='名前・分類を変更';edit.onclick=()=>editQR(q.id);let del=document.createElement('button');del.textContent='完全削除';del.className='danger';del.onclick=()=>deleteQR(q.id);let print=document.createElement('button');print.textContent='印刷対象に選ぶ';print.onclick=()=>{showingPastQR=!!(q.printed||!q.createdAt||Date.now()-new Date(q.createdAt).getTime()>=3600000);openPrintSelection();let cb=document.querySelector(`#printChoices input[value="${q.id}"]`);if(cb)cb.checked=true};d.append(titleRow,category,qr,status,edit,del,print);el.appendChild(d)})}
+function renderQRItems(items,el){el.innerHTML='';if(!items.length){el.textContent='QRコードはありません。';return}items.forEach(q=>{let d=document.createElement('div');d.className='card';let titleRow=document.createElement('div');titleRow.className='qr-title-row';let h=document.createElement('h3');h.textContent=q.name;let more=document.createElement('button');more.className='qr-more';more.textContent='•••';more.setAttribute('aria-label','QRコードのメニュー');more.onclick=()=>{let menu=document.createElement('div');menu.className='row';let remove=document.createElement('button');remove.textContent='消去';remove.className='danger';remove.onclick=()=>deleteQR(q.id);menu.append(remove);titleRow.after(menu);more.onclick=()=>menu.remove()};titleRow.append(h,more);let qr=document.createElement('div');qr.className='qr-image';new QRCode(qr,{text:qrUrl(q),width:180,height:180});let status=document.createElement('p');status.className='small';status.textContent=q.printed?'印刷済み':'未印刷';let edit=document.createElement('button');edit.textContent='名前・分類を変更';edit.onclick=()=>editQR(q.id);let del=document.createElement('button');del.textContent='完全削除';del.className='danger';del.onclick=()=>deleteQR(q.id);let print=document.createElement('button');print.textContent='印刷対象に選ぶ';print.onclick=()=>{showingPastQR=!!(q.printed||!q.createdAt||Date.now()-new Date(q.createdAt).getTime()>=3600000);openPrintSelection();let cb=document.querySelector(`#printChoices input[value="${q.id}"]`);if(cb)cb.checked=true};d.append(titleRow,qr,status,edit,del,print);el.appendChild(d)})}
 
 function editQR(id){let q=state.qrs.find(x=>x.id===id);if(!q)return;let p=document.getElementById('modalPanel');p.innerHTML=`<h2>QRコードの変更</h2><label>名前</label><input id="editName" value="${escapeHtml(q.name)}"><label>分類</label><select id="editCategory">${state.categories.map(c=>`<option ${c===q.category?'selected':''}>${escapeHtml(c)}</option>`).join('')}</select><button class="primary full" onclick="saveQRChange('${id}')">保存</button><button class="full" onclick="closeModal()">キャンセル</button>`;openModal()}
 async function saveQRChange(id){let q=state.qrs.find(x=>x.id===id);if(!q)return;let name=document.getElementById('editName').value.trim()||q.name;if(state.qrs.some(x=>x.id!==id&&!x.deleted&&x.name.trim().toLocaleLowerCase()===name.toLocaleLowerCase()))return alert('同じ名前のQRコードがすでにあります。');q.name=name;q.category=document.getElementById('editCategory').value;await saveState();closeModal();showQRs()}
@@ -217,25 +217,28 @@ async function makeDailyReport(vertical){
     const dayLogs=logs.slice().sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
     if(!dayLogs.length){ctx.font='58px sans-serif';ctx.fillText('記録はありません',x,y);return y+70;}
     const rowGap=34, timeW=280, nameW=w-timeW-24;
-    for(let index=0;index<dayLogs.length;index++){
-      const item=dayLogs[index];
-      const dt=new Date(item.timestamp);
-      const time=dt.toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',hour12:false});
-      ctx.font='bold 66px sans-serif';ctx.fillStyle='#12304a';ctx.fillText(time,x,y);
-      ctx.font='bold 66px sans-serif';
+    // 行の高さと中央位置を先に計算。棒は時刻・名前の文字幅とは独立した列に描く。
+    const rowData=dayLogs.map(item=>{
       const name=item.name||item.category||'（名前なし）';
       const lines=wrap(name,'bold 66px sans-serif',nameW);
-      lines.forEach((line,i)=>ctx.fillText(line,x+timeW,y+i*78));
       const rowH=Math.max(88,lines.length*78)+rowGap;
-      const next=dayLogs[index+1];
-      // 連続する記録がどちらも「勉強」のときだけ、記録同士を線でつなぐ。
-      // 間に別分類（起床・就寝など）が入っていれば線を描かない。
-      if(item.category==='勉強'&&next&&next.category==='勉強'){
-        ctx.strokeStyle='#12304a';ctx.lineWidth=5;ctx.beginPath();
-        ctx.moveTo(x+timeW/2,y+18);ctx.lineTo(x+timeW/2,y+rowH-14);ctx.stroke();
+      return {item,lines,rowH,center:y+rowH/2};
+    });
+    // 連続する「勉強」記録だけ、前の行の中央から次の行の中央まで棒をつなぐ。
+    ctx.strokeStyle='#12304a';ctx.lineWidth=5;ctx.lineCap='butt';
+    for(let i=0;i<rowData.length-1;i++){
+      if(rowData[i].item.category==='勉強' && rowData[i+1].item.category==='勉強'){
+        ctx.beginPath();ctx.moveTo(x+18,rowData[i].center);ctx.lineTo(x+18,rowData[i+1].center);ctx.stroke();
       }
-      y+=rowH;line(x,y,w);y+=18;
     }
+    rowData.forEach(({item,lines,rowH},i)=>{
+      const dt=new Date(item.timestamp);
+      const time=dt.toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',hour12:false});
+      ctx.font='bold 66px sans-serif';ctx.fillStyle='#12304a';ctx.fillText(time,x+52,y);
+      ctx.font='bold 66px sans-serif';
+      lines.forEach((line,i)=>ctx.fillText(line,x+timeW,y+i*78));
+      y+=rowH;line(x,y,w);y+=18;
+    });
     return y;
   }
   y=drawSection(x,y,w,'今日の一日');y+=4;

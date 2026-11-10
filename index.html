@@ -8,9 +8,7 @@
 @media(max-width:560px){.report-grid{grid-template-columns:1fr}.report-duration{font-size:19px}}
 @media print{body{padding:0}.bottom-nav,header,button,.no-print{display:none!important}main{max-width:none;padding:0}.report{border:0;margin:0;padding:0}}
 
-.hour-item{position:relative}
-.hour-item.has-log:after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:var(--ink)}
-.hour-item.active.has-log:after{background:#fff}
+.hour-item.has-log{font-weight:bold}
 .entry{--cat-color:var(--ink);border-left:3px solid var(--cat-color);padding-left:14px;margin-left:-3px}
 .entry:before{background:var(--cat-color)}
 .entry-name{display:flex;align-items:center;justify-content:flex-start;gap:6px;cursor:pointer;flex-wrap:wrap}
